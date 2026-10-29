@@ -1,0 +1,5 @@
+# dsh-session-menu-delete：bundle patch 层。
+# 安装到 profile 后，这一条把插件挂进组合配置。
+- insert:
+    - id: dsh-session-menu-delete
+      name: dsh-session-menu-delete

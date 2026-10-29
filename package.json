@@ -1,0 +1,75 @@
+{
+  "name": "dsh-session-menu-delete",
+  "version": "0.1.1",
+  "description": "在侧边栏会话行的三点菜单里加一项「删除会话」：确认后永久删除该会话的磁盘记录与投影缓存，并立即从左侧列表移除。纯本地，只监听回环地址。",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "default": "./lib/client.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "scripts",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "session",
+    "delete"
+  ],
+  "license": "MIT",
+  "author": "Dcmwfg",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Dcmwfg/dsh-session-menu-delete.git"
+  },
+  "homepage": "https://github.com/Dcmwfg/dsh-session-menu-delete#readme",
+  "bugs": {
+    "url": "https://github.com/Dcmwfg/dsh-session-menu-delete/issues"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "check": "node --check lib/index.js && node --check lib/client.js && node -e \"JSON.parse(require('node:fs').readFileSync('package.json','utf8'));console.log('package.json ok')\""
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-slots",
+        "@deepseek-ai/dsh-client-ui-workspace"
+      ],
+      "platform": "web"
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "*",
+    "@deepseek-ai/dsh-client-ui-slots": "*"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/cordis": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-client-ui-slots": {
+      "optional": true
+    }
+  },
+  "os": [
+    "win32",
+    "darwin",
+    "linux"
+  ]
+}
