@@ -3,25 +3,70 @@
 在 DSH Web GUI 的侧边栏，会话行三点菜单里加一项 **删除会话**（排在「归档会话」下面）。
 确认后：永久删除该会话的磁盘记录与投影缓存，并立刻把左侧那一行摘掉。
 
+DSH 自带的会话操作只有「归档」——归档只是收起来，日志文件还在磁盘上一直累积，没有删除入口。这个插件补的就是这一个缺口。
+
+> **删了就没了。** 这个插件不做回收站，删掉之后没有任何恢复入口。要可恢复的删除，别用这个。
+
+- 纯本地：宿主半只监听回环地址，不联网、不调外部接口。
+- 不改 profile 的 `cordis.patch.yml`：走插件自带的 bundle patch。
+- 平台：Windows / macOS / Linux（不依赖任何平台专有 API）。
+
 ## 装
+
+先克隆到本地（路径**别带空格**，Windows 上 `link:` + `pnpm install` 会做 junction，带空格或特殊字符容易失败）：
+
+```bash
+git clone https://github.com/Dcmwfg/dsh-session-menu-delete.git
+```
+
+然后改 profile 的 `package.json` 两处：
 
 ```jsonc
 // ~/.dsh/profiles/desktop/package.json
 "dependencies": {
-  // 指向你克隆下来的目录（Windows 用正斜杠）
+  // 指向上一步克隆下来的目录（Windows 用正斜杠，别用反斜杠）
   "dsh-session-menu-delete": "link:/path/to/dsh-session-menu-delete"
+},
+"dsh": {
+  "profile": {
+    "bundles": [
+      // …原有的…
+      "dsh-session-menu-delete"
+    ]
+  }
 }
 ```
-
-并把 `"dsh-session-menu-delete"` 加进同文件的 `dsh.profile.bundles` 数组，然后在 profile 目录里 `pnpm install`、重启 DSH。
 
 profile 目录按系统不同：
 - Windows：`%USERPROFILE%\.dsh\profiles\desktop`
 - macOS / Linux：`~/.dsh/profiles/desktop`
 
-装完想看有没有装坏，重启前先跑一遍 `dsh-plugin-guard`（若已安装）。
+然后在 profile 目录里 `pnpm install`，重启 DSH。重启后侧边栏会话行的三点菜单里应该多出「删除会话」。
 
-插件自带 `cordis.patch.yml`（`- insert:` 一条），由 bundle patch 机制加载，不用改 profile 的 cordis.patch.yml。
+装完想看有没有装坏，重启前先跑一遍 `dsh-plugin-guard`（若已安装）：
+
+```bash
+node <path-to>/dsh-plugin-guard/guard.mjs check --profile desktop
+```
+
+插件自带 `cordis.patch.yml`（`- insert:` 一条），由 bundle patch 机制加载，**不用**改 profile 的 cordis.patch.yml。
+
+### 只想先试试，不想装
+
+克隆下来直接跑自检，只碰临时目录和你的真实 `.dsh` 里的哑会话（`real-home-test` 会自己造自己删）：
+
+```bash
+cd dsh-session-menu-delete
+node scripts/selftest.mjs
+```
+
+## 卸载
+
+1. 从 profile 的 `dsh.profile.bundles` 里删掉 `"dsh-session-menu-delete"`；
+2. 从 `dependencies` 里删掉同名条目；
+3. profile 目录里 `pnpm install`，重启 DSH。
+
+卸载后菜单项消失。**已经删掉的会话不会回来**——这个插件不做回收站。
 
 ## 用
 
