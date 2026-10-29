@@ -1,0 +1,836 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>dsh-session-menu-delete · 插件动画</title>
+<style>
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;height:100%;background:#03060a;overflow:hidden;font-family:"Microsoft YaHei","PingFang SC","Noto Sans SC",system-ui,sans-serif}
+#stage{position:fixed;inset:0;display:grid;place-items:center}
+#wrap{position:relative;width:min(100vw,calc(100vh * 16 / 9));height:min(100vh,calc(100vw * 9 / 16));background:#03060a;box-shadow:0 0 90px rgba(0,0,0,.95)}
+canvas{display:block;width:100%;height:100%}
+#gate{position:absolute;inset:0;z-index:20;display:grid;place-items:center;background:radial-gradient(circle at 50% 45%,rgba(12,28,42,.97),rgba(2,5,8,.995));cursor:pointer;transition:opacity .5s}
+#gate.hide{opacity:0;pointer-events:none}
+#gate .box{text-align:center;user-select:none}
+#gate .play{width:96px;height:96px;margin:0 auto 24px;border-radius:50%;border:1px solid rgba(120,190,230,.5);background:radial-gradient(circle at 38% 34%,rgba(90,170,220,.26),rgba(20,50,75,.12));display:grid;place-items:center;transition:.28s}
+#gate:hover .play{border-color:rgba(160,220,255,.95);box-shadow:0 0 38px rgba(90,170,220,.38);transform:scale(1.06)}
+#gate .play svg{width:34px;height:34px;margin-left:6px;fill:#bfe3f7}
+#gate .t1{font-size:20px;letter-spacing:.18em;color:#9fc4da}
+#gate .t2{margin-top:12px;font-size:13px;letter-spacing:.12em;color:#4f7084}
+#bar{position:absolute;left:0;right:0;bottom:0;height:2px;background:rgba(120,190,230,.10);z-index:12;opacity:0;transition:.4s}
+#bar.on{opacity:1}
+#fill{height:100%;width:0;background:linear-gradient(90deg,#2f6f9c,#8fd8ff)}
+#hint{position:absolute;right:18px;bottom:16px;z-index:12;font-size:12px;color:#3a5769;letter-spacing:.1em;opacity:0;transition:.5s}
+#hint.on{opacity:1}
+</style>
+</head>
+<body>
+<div id="stage"><div id="wrap">
+  <canvas id="c"></canvas>
+  <div id="bar"><div id="fill"></div></div>
+  <div id="hint">空格 暂停 · R 重播</div>
+  <div id="gate"><div class="box">
+    <div class="play"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></div>
+    <div class="t1">点击开始</div>
+    <div class="t2">有声音 · 建议戴耳机</div>
+  </div></div>
+</div></div>
+<script>
+'use strict';
+
+// ============================================================
+//  画布
+// ============================================================
+var W = 1280, H = 720;
+var cv = document.getElementById('c');
+var C = cv.getContext('2d');
+var DPR = 1;
+function fit(){
+  DPR = Math.min(2, window.devicePixelRatio || 1);
+  var r = document.getElementById('wrap').getBoundingClientRect();
+  cv.width = Math.max(2, Math.round(r.width * DPR));
+  cv.height = Math.max(2, Math.round(r.height * DPR));
+  var s = Math.min(cv.width / W, cv.height / H);
+  C.setTransform(s, 0, 0, s, 0, 0);
+}
+window.addEventListener('resize', fit);
+
+// ============================================================
+//  工具
+// ============================================================
+function cl(x){ return x < 0 ? 0 : (x > 1 ? 1 : x); }
+function seg(t, a, b){ if (b === a) return t >= b ? 1 : 0; return cl((t - a) / (b - a)); }
+function eo(x){ return 1 - Math.pow(1 - x, 3); }
+function ei(x){ return x * x * x; }
+function eio(x){ return x < .5 ? 4*x*x*x : 1 - Math.pow(-2*x + 2, 3) / 2; }
+function lerp(a, b, t){ return a + (b - a) * t; }
+
+var COL = {
+  text:'#cad9e3', dim:'#6d8493', faint:'#3d5361',
+  blue:'#5aa6d8', cyan:'#7fd0ff', pale:'#a9d9f2',
+  red:'#e2564c', redDim:'#8e3530',
+  green:'#5bc08c', amber:'#d8a24a',
+  meta:'#6b8898', hotText:'#ffb3ab',
+  panel:'#0b1017', line:'rgba(90,166,216,.16)'
+};
+var FT = '"Microsoft YaHei","PingFang SC","Noto Sans SC",system-ui,sans-serif';
+function font(size, weight){ return (weight || 400) + ' ' + size + 'px ' + FT; }
+function text(s, x, y, size, color, align, weight, alpha){
+  C.save();
+  C.globalAlpha = (alpha === undefined ? 1 : alpha);
+  C.font = font(size, weight);
+  C.fillStyle = color;
+  C.textAlign = align || 'left';
+  C.textBaseline = 'middle';
+  C.fillText(s, x, y);
+  C.restore();
+}
+function rr(x, y, w, h, r){
+  C.beginPath();
+  if (C.roundRect){ C.roundRect(x, y, w, h, r); return; }
+  var m = Math.min(r, w/2, h/2);
+  C.moveTo(x+m, y);
+  C.arcTo(x+w, y, x+w, y+h, m);
+  C.arcTo(x+w, y+h, x, y+h, m);
+  C.arcTo(x, y+h, x, y, m);
+  C.arcTo(x, y, x+w, y, m);
+  C.closePath();
+}
+function fillRR(x, y, w, h, r, color, alpha){
+  C.save(); C.globalAlpha = (alpha === undefined ? 1 : alpha);
+  rr(x, y, w, h, r); C.fillStyle = color; C.fill(); C.restore();
+}
+function strokeRR(x, y, w, h, r, color, lw, alpha){
+  C.save(); C.globalAlpha = (alpha === undefined ? 1 : alpha);
+  rr(x, y, w, h, r); C.strokeStyle = color; C.lineWidth = lw || 1; C.stroke(); C.restore();
+}
+
+// ============================================================
+//  粒子
+// ============================================================
+var PT = [];
+for (var i = 0; i < 110; i++){
+  PT.push({ x: Math.random()*W, y: Math.random()*H, r: Math.random()*1.7 + 0.4,
+            sp: Math.random()*11 + 4, ph: Math.random()*6.283, a: Math.random()*0.4 + 0.08 });
+}
+
+function drawBg(t){
+  var g = C.createLinearGradient(0, 0, 0, H);
+  g.addColorStop(0, '#050b12'); g.addColorStop(.5, '#071119'); g.addColorStop(1, '#020508');
+  C.fillStyle = g; C.fillRect(0, 0, W, H);
+  var rg = C.createRadialGradient(W*.5, -H*.15, 10, W*.5, -H*.15, H*1.5);
+  rg.addColorStop(0, 'rgba(40,110,160,.20)');
+  rg.addColorStop(.55, 'rgba(20,60,95,.07)');
+  rg.addColorStop(1, 'rgba(0,0,0,0)');
+  C.fillStyle = rg; C.fillRect(0, 0, W, H);
+  for (var i = 0; i < PT.length; i++){
+    var p = PT[i];
+    var y = (p.y - t * p.sp) % (H + 80);
+    if (y < -40) y += H + 80;
+    var x = p.x + Math.sin(t*.35 + p.ph) * 15;
+    var a = p.a * (0.55 + 0.45 * Math.sin(t*1.1 + p.ph));
+    C.beginPath(); C.arc(x, y, p.r, 0, 6.2832);
+    C.fillStyle = 'rgba(140,200,235,' + (a*0.5).toFixed(3) + ')'; C.fill();
+  }
+  var vg = C.createLinearGradient(0, H*.5, 0, H);
+  vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(0,0,0,.55)');
+  C.fillStyle = vg; C.fillRect(0, H*.5, W, H*.5);
+}
+
+// ============================================================
+//  音频引擎
+// ============================================================
+var AC = null, MASTER = null, DRONE_G = null, MUTED = false;
+
+function makeIR(dur, decay){
+  var rate = AC.sampleRate;
+  var len = Math.max(1, Math.floor(rate * dur));
+  var buf = AC.createBuffer(2, len, rate);
+  for (var ch = 0; ch < 2; ch++){
+    var d = buf.getChannelData(ch);
+    for (var i = 0; i < len; i++){ d[i] = (Math.random()*2 - 1) * Math.pow(1 - i/len, decay); }
+  }
+  return buf;
+}
+
+function audioInit(){
+  if (AC) return;
+  var A = window.AudioContext || window.webkitAudioContext;
+  if (!A) return;
+  AC = new A();
+  MASTER = AC.createGain(); MASTER.gain.value = 0.9;
+  var dry = AC.createGain(); dry.gain.value = 0.82;
+  var wet = AC.createGain(); wet.gain.value = 0.30;
+  var conv = AC.createConvolver(); conv.buffer = makeIR(2.6, 3.4);
+  MASTER.connect(dry); dry.connect(AC.destination);
+  MASTER.connect(conv); conv.connect(wet); wet.connect(AC.destination);
+
+  var g = AC.createGain(); g.gain.value = 0;
+  var lp = AC.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 330; lp.Q.value = 0.85;
+  var o1 = AC.createOscillator(); o1.type = 'sawtooth'; o1.frequency.value = 55;
+  var g1 = AC.createGain(); g1.gain.value = 0.34;
+  var o2 = AC.createOscillator(); o2.type = 'sine'; o2.frequency.value = 82.41; o2.detune.value = 8;
+  var o3 = AC.createOscillator(); o3.type = 'sine'; o3.frequency.value = 110; o3.detune.value = -6;
+  var g3 = AC.createGain(); g3.gain.value = 0.16;
+  o1.connect(g1); g1.connect(lp);
+  o2.connect(lp);
+  o3.connect(g3); g3.connect(lp);
+  lp.connect(g); g.connect(MASTER);
+  o1.start(); o2.start(); o3.start();
+  g.gain.linearRampToValueAtTime(0.048, AC.currentTime + 4.5);
+  DRONE_G = g;
+}
+
+function tone(o){
+  if (!AC || MUTED) return;
+  var osc = AC.createOscillator();
+  var g = AC.createGain();
+  osc.type = o.type || 'sine';
+  var t = AC.currentTime + (o.at || 0);
+  var dur = o.dur || 0.2;
+  var vol = (o.vol === undefined ? 0.12 : o.vol);
+  var atk = (o.atk === undefined ? 0.006 : o.atk);
+  osc.frequency.setValueAtTime(o.f0, t);
+  if (o.f1 !== undefined) osc.frequency.exponentialRampToValueAtTime(Math.max(20, o.f1), t + dur);
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(Math.max(0.0002, vol), t + atk);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  osc.connect(g); g.connect(MASTER);
+  osc.start(t); osc.stop(t + dur + 0.05);
+}
+
+function noiseHit(dur, freq, q, vol){
+  if (!AC || MUTED) return;
+  var rate = AC.sampleRate;
+  var len = Math.max(1, Math.floor(rate * dur));
+  var buf = AC.createBuffer(1, len, rate);
+  var d = buf.getChannelData(0);
+  for (var i = 0; i < len; i++){ d[i] = (Math.random()*2 - 1) * Math.pow(1 - i/len, 1.6); }
+  var s = AC.createBufferSource(); s.buffer = buf;
+  var f = AC.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = freq || 900; f.Q.value = q || 1.1;
+  var g = AC.createGain(); g.gain.value = (vol === undefined ? 0.16 : vol);
+  s.connect(f); f.connect(g); g.connect(MASTER);
+  s.start();
+}
+
+function sfxClick(){ tone({f0:1150, f1:740, dur:0.055, type:'square', vol:0.05, atk:0.002}); noiseHit(0.03, 2600, 2.6, 0.045); }
+function sfxTick(f){ tone({f0:f, f1:f*1.03, dur:0.05, type:'triangle', vol:0.042, atk:0.002}); }
+function sfxOpen(){ tone({f0:280, f1:880, dur:0.16, type:'sine', vol:0.055}); }
+function sfxClose(){ tone({f0:820, f1:250, dur:0.14, type:'sine', vol:0.045}); }
+function sfxThud(){ tone({f0:132, f1:40, dur:0.45, type:'sine', vol:0.30, atk:0.004}); noiseHit(0.24, 170, 0.9, 0.13); }
+function sfxDelete(){ tone({f0:440, f1:58, dur:0.55, type:'sawtooth', vol:0.09}); noiseHit(0.4, 700, 0.7, 0.18); }
+function sfxGone(){ noiseHit(0.26, 1500, 0.8, 0.11); tone({f0:720, f1:170, dur:0.3, type:'sine', vol:0.06}); }
+function sfxOk(){ var f = [523.25, 659.25, 783.99, 1046.5]; for (var i = 0; i < f.length; i++) tone({f0:f[i], dur:0.95, type:'sine', vol:0.07, at: i*0.088}); }
+function sfxBubble(){ noiseHit(0.13, 520, 3.0, 0.045); }
+function sfxDeep(){ tone({f0:70, f1:34, dur:1.6, type:'sine', vol:0.11, atk:0.05}); }
+
+/* ============================================================
+   时间轴
+   ============================================================ */
+var TOTAL = 57;
+var S1=0, S2=6.5, S3=13, S4=19.5, S5=25.5, S6=32.5, S7=43.5, S8=49.5, END=57;
+
+function fa(u, dur, fin, fout){
+  var a = seg(u, 0, fin);
+  var b = 1 - seg(u, dur - fout, dur);
+  return Math.min(a, b);
+}
+
+var ROWS = [
+  { n:'PyTorch 显存泄漏排查', m:'今天 14:20' },
+  { n:'局域网 NAS 挂载失败', m:'今天 11:08' },
+  { n:'Rust 生命周期笔记',   m:'昨天 22:41' },
+  { n:'dsh 插件打包流程',    m:'昨天 19:02' },
+  { n:'Excel 公式对不上',    m:'3 天前' },
+  { n:'k8s ingress 502',     m:'4 天前' },
+  { n:'周末读《深网》',      m:'上周' },
+  { n:'日志分级方案',        m:'上周' }
+];
+
+/* ============================================================
+   组件
+   ============================================================ */
+var SB = { x: 300, y: 74, w: 330, h: 500 };
+
+function panel(x, y, w, h, alpha, title){
+  fillRR(x, y, w, h, 14, '#0a0f16', 0.94 * alpha);
+  strokeRR(x, y, w, h, 14, 'rgba(90,166,216,.20)', 1, alpha);
+  if (title) text(title, x + 18, y + 26, 13, COL.dim, 'left', 400, alpha);
+}
+
+function row(x, y, w, h, name, meta, alpha, opt){
+  opt = opt || {};
+  var a = (alpha === undefined ? 1 : alpha);
+  if (opt.hover){ fillRR(x, y, w, h, 8, 'rgba(90,166,216,.13)', a); }
+  if (opt.active){ fillRR(x, y, w, h, 8, 'rgba(90,166,216,.20)', a); }
+  text(name, x + 12, y + h*0.40, 13.5, opt.gone ? COL.faint : COL.text, 'left', 400, a * (opt.fade === undefined ? 1 : opt.fade));
+  text(meta, x + 12, y + h*0.74, 10.5, COL.meta, 'left', 400, a * 0.92 * (opt.fade === undefined ? 1 : opt.fade));
+  var dx = x + w - 26;
+  for (var i = -1; i <= 1; i++){
+    C.beginPath(); C.arc(dx, y + h/2 + i*4.2, 1.6, 0, 6.2832);
+    C.fillStyle = opt.gone ? 'rgba(60,80,95,' + (0.5*a) + ')' : 'rgba(140,170,190,' + (0.75*a) + ')';
+    C.fill();
+  }
+  if (opt.menuHot){
+    var pulse = 0.55 + 0.45*Math.sin(opt.pulseT*5.2);
+    C.beginPath(); C.arc(dx, y + h/2, 13, 0, 6.2832);
+    C.strokeStyle = 'rgba(127,208,255,' + (0.55*pulse*a) + ')'; C.lineWidth = 1.4; C.stroke();
+  }
+}
+
+function sidebar(alpha, opt){
+  opt = opt || {};
+  panel(SB.x, SB.y, SB.w, SB.h, alpha, '会话');
+  var top = SB.y + 48;
+  var rh = 46;
+  for (var i = 0; i < ROWS.length; i++){
+    var y = top + i * (rh + 4);
+    if (y + rh > SB.y + SB.h - 12) break;
+    var o = {};
+    if (opt.hoverRow === i) o.hover = true;
+    if (opt.activeRow === i) o.active = true;
+    if (opt.goneRow === i){ o.gone = true; o.fade = opt.goneFade; }
+    if (opt.menuRow === i){ o.hover = true; o.menuHot = true; o.pulseT = opt.pulseT || 0; }
+    row(SB.x + 10, y, SB.w - 20, rh, ROWS[i].n, ROWS[i].m, alpha, o);
+  }
+}
+
+function menu(x, y, items, alpha, hot, hotT){
+  var w = 168, ih = 30, h = items.length * ih + 12;
+  fillRR(x, y, w, h, 9, '#101822', 0.98 * alpha);
+  strokeRR(x, y, w, h, 9, 'rgba(90,166,216,.26)', 1, alpha);
+  for (var i = 0; i < items.length; i++){
+    var iy = y + 6 + i * ih;
+    var isHot = items[i].hot;
+    if (isHot){
+      var pa = (hotT === undefined ? 1 : 0.5 + 0.5*Math.sin(hotT*4.6));
+      fillRR(x + 5, iy, w - 10, ih - 2, 6, 'rgba(226,86,76,' + (0.16 + 0.13*pa) + ')', alpha);
+    }
+    text(items[i].n, x + 18, iy + ih/2, 12.5,
+         isHot ? COL.hotText : COL.text, 'left', isHot ? 500 : 400, alpha * (items[i].dim ? 0.5 : 1));
+    if (isHot){
+      var pa2 = (hotT === undefined ? 1 : 0.55 + 0.45*Math.sin(hotT*4.6));
+      C.save(); C.globalAlpha = alpha * pa2;
+      C.strokeStyle = 'rgba(226,86,76,.85)'; C.lineWidth = 1.2;
+      rr(x + 5, iy, w - 10, ih - 2, 6); C.stroke(); C.restore();
+    }
+  }
+}
+
+function cursor(x, y, alpha, press){
+  C.save(); C.globalAlpha = alpha; C.translate(x, y);
+  var s = press ? 0.88 : 1; C.scale(s, s);
+  C.beginPath();
+  C.moveTo(0, 0); C.lineTo(0, 17); C.lineTo(4.6, 12.8); C.lineTo(7.6, 19.6);
+  C.lineTo(10.6, 18.2); C.lineTo(7.6, 11.4); C.lineTo(13.4, 11.0); C.closePath();
+  C.fillStyle = '#eef6fb'; C.fill();
+  C.strokeStyle = 'rgba(10,18,26,.85)'; C.lineWidth = 1.2; C.stroke();
+  C.restore();
+}
+
+function caption(s, alpha, y){
+  C.save(); C.globalAlpha = alpha;
+  C.font = font(23, 300);
+  var w = C.measureText(s).width;
+  var cx = W/2, cy = y || 622;
+  var g = C.createLinearGradient(cx - w/2 - 60, 0, cx + w/2 + 60, 0);
+  g.addColorStop(0, 'rgba(3,6,10,0)');
+  g.addColorStop(.5, 'rgba(3,6,10,.72)');
+  g.addColorStop(1, 'rgba(3,6,10,0)');
+  C.fillStyle = g; C.fillRect(cx - w/2 - 60, cy - 26, w + 120, 52);
+  C.textAlign = 'center'; C.textBaseline = 'middle';
+  C.fillStyle = '#cfe0ea'; C.fillText(s, cx, cy);
+  C.restore();
+}
+
+function bigNumber(v, x, y, size, alpha, color){
+  text(String(Math.round(v)), x, y, size, color || COL.cyan, 'center', 200, alpha);
+}
+
+/* ============================================================
+   场景 1 · 标题
+   ============================================================ */
+function whale(cx, cy, sc, alpha, t){
+  C.save(); C.globalAlpha = alpha; C.translate(cx, cy); C.scale(sc, sc);
+  C.rotate(Math.sin(t*0.42)*0.035);
+  C.beginPath();
+  C.moveTo(-150, 6);
+  C.bezierCurveTo(-104, -52, 10, -74, 92, -34);
+  C.bezierCurveTo(140, -12, 150, 20, 120, 40);
+  C.bezierCurveTo(58, 72, -52, 60, -112, 30);
+  C.bezierCurveTo(-132, 20, -142, 12, -150, 6);
+  C.closePath();
+  C.fillStyle = 'rgba(90,166,216,.10)'; C.fill();
+  C.beginPath();
+  C.moveTo(-146, 8); C.bezierCurveTo(-196, -30, -236, -6, -246, 22);
+  C.bezierCurveTo(-218, 26, -190, 40, -160, 46);
+  C.closePath();
+  C.fillStyle = 'rgba(90,166,216,.09)'; C.fill();
+  C.beginPath();
+  C.moveTo(-146, 10); C.bezierCurveTo(-192, 44, -214, 78, -206, 104);
+  C.bezierCurveTo(-176, 82, -150, 58, -132, 38);
+  C.closePath();
+  C.fillStyle = 'rgba(90,166,216,.07)'; C.fill();
+  C.beginPath(); C.arc(78, -14, 4.5, 0, 6.2832);
+  C.fillStyle = 'rgba(160,220,250,.35)'; C.fill();
+  C.restore();
+}
+
+function scene1(u){
+  var a1 = eo(seg(u, 0.55, 1.7));
+  var a2 = eo(seg(u, 1.25, 2.4));
+  var a3 = eo(seg(u, 2.1, 3.2));
+  whale(W/2, H*0.44, 1.32, 0.85 * a1, u);
+  var drift = Math.sin(u*0.5) * 4;
+  text('dsh-session-menu-delete', W/2, H*0.445 + drift, 46, '#d7e9f5', 'center', 300, a1);
+  if (a2 > 0){
+    C.save(); C.globalAlpha = a2;
+    var w = 380 * eo(seg(u, 1.4, 2.35));
+    var g = C.createLinearGradient(W/2 - w/2, 0, W/2 + w/2, 0);
+    g.addColorStop(0, 'rgba(90,166,216,0)');
+    g.addColorStop(.5, 'rgba(127,208,255,.62)');
+    g.addColorStop(1, 'rgba(90,166,216,0)');
+    C.fillStyle = g; C.fillRect(W/2 - w/2, H*0.50, w, 1);
+    C.restore();
+  }
+  text('侧边栏三点菜单里的「删除会话」', W/2, H*0.545, 21, '#8fb4c9', 'center', 300, a2);
+  text('0.1.1   ·   MIT   ·   只在回环地址上工作', W/2, H*0.615, 12.5, COL.faint, 'center', 400, a3);
+}
+
+/* ============================================================
+   场景 2 · 痛点：归档 != 删除
+   ============================================================ */
+function fileChip(x, y, w, label, alpha){
+  fillRR(x, y, w, 24, 5, '#0d1620', 0.9*alpha);
+  strokeRR(x, y, w, 24, 5, 'rgba(90,166,216,.22)', 1, alpha);
+  text(label, x + 9, y + 12, 10.5, '#7d97a8', 'left', 400, alpha);
+}
+
+function scene2(u){
+  var a = eo(seg(u, 0.15, 0.95));
+  text('归档  ≠  删除', W/2, 132, 40, '#cfdde8', 'center', 300, a);
+  var k = eo(seg(u, 0.9, 3.6));
+
+  var lx = 236, ly = 214, lw = 372, lh = 300;
+  panel(lx, ly, lw, lh, a, '左侧栏');
+  text('归档', lx + 18, ly + 58, 17, COL.amber, 'left', 500, a * k);
+  var rowsFade = 1 - seg(u, 1.5, 2.4)*0.88;
+  var names = ['PyTorch 显存泄漏排查','局域网 NAS 挂载失败','Rust 生命周期笔记','dsh 插件打包流程'];
+  var metas = ['今天 14:20','今天 11:08','昨天 22:41','昨天 19:02'];
+  for (var i = 0; i < 4; i++){
+    var ry = ly + 84 + i * 50;
+    var fa2 = (i === 1) ? rowsFade : 1;
+    var sh = (i === 1) ? seg(u, 1.5, 2.4) * 10 : 0;
+    row(lx + 12, ry - sh, lw - 24, 42, names[i], metas[i], a, { fade: fa2 });
+  }
+  text('那一行不见了', lx + lw/2, ly + lh - 30, 12.5, COL.dim, 'center', 400, a * seg(u, 2.4, 3.1));
+
+  var rx = 672, ry = 214, rw = 372, rh = 300;
+  panel(rx, ry, rw, rh, a, '磁盘');
+  text('日志文件一直在涨', rx + 18, ry + 58, 17, COL.red, 'left', 500, a * k);
+  var n = Math.round(lerp(292, 296, seg(u, 1.6, 4.4)));
+  bigNumber(n, rx + rw - 26, ry + 54, 30, a * seg(u, 1.3, 1.9), COL.red);
+  text('个会话日志', rx + rw - 26, ry + 80, 10.5, COL.faint, 'right', 400, a * seg(u, 1.3, 1.9));
+  for (var j = 0; j < 6; j++){
+    var ap = seg(u, 1.6 + j*0.42, 2.0 + j*0.42);
+    if (ap <= 0) continue;
+    var fy = ry + 104 + j * 30;
+    fileChip(rx + 18, fy, rw - 36, 'session.v' + (j % 2 === 0 ? '4' : '3') + '.jsonl.zstd', a * ap);
+  }
+  text('删不掉。只能一直留着。', rx + rw/2, ry + rh - 30, 12.5, COL.red, 'center', 400, a * seg(u, 3.2, 4.0));
+
+  caption('归档只是把它收起来。磁盘上的日志没有变少一个字节。', eo(seg(u, 3.5, 4.6)));
+}
+
+/* ============================================================
+   场景 3 · 菜单里多了一项
+   ============================================================ */
+var MENU_ITEMS = [
+  { n:'置顶' }, { n:'重命名' }, { n:'分叉会话' }, { n:'归档会话' },
+  { n:'删除会话', hot:true }, { n:'复制 Session ID', dim:true }
+];
+
+function scene3(u){
+  var a = eo(seg(u, 0.15, 0.85));
+  var X = 360, Y = 90, WW = 360, HH = 520;
+  panel(X, Y, WW, HH, a, '会话');
+  var top = Y + 48, rh = 46, gap = 4, targetRow = 2;
+  var hoverAmt = eo(seg(u, 1.15, 1.55));
+  for (var i = 0; i < 8; i++){
+    var y = top + i*(rh+gap);
+    if (y + rh > Y + HH - 12) break;
+    var o = {};
+    if (i === targetRow && hoverAmt > 0.02){ o.hover = true; }
+    if (i === targetRow && hoverAmt > 0.3){ o.active = true; }
+    row(X + 10, y, WW - 20, rh, ROWS[i].n, ROWS[i].m, a, o);
+  }
+  var dx = X + WW - 26;
+  var ty = top + targetRow*(rh+gap) + rh/2;
+  var cxp = lerp(1010, dx, eio(seg(u, 1.5, 2.7)));
+  var cyp = lerp(628, ty + 2, eio(seg(u, 1.5, 2.7)));
+  var click = seg(u, 2.7, 3.0);
+  var menuA = eo(seg(u, 2.86, 3.24));
+  if (menuA > 0.001){
+    menu(dx - 148, top + targetRow*(rh+gap) + rh + 2, MENU_ITEMS, a * menuA, true, u);
+  }
+  cursor(cxp, cyp, eo(seg(u, 1.3, 1.8)), click > 0 && click < 1);
+  caption('会话行的「…」里，多了一项。', eo(seg(u, 3.1, 3.9)));
+}
+
+/* ============================================================
+   场景 4 · 确认
+   ============================================================ */
+function scene4(u){
+  var dim = eo(seg(u, 0.1, 0.7));
+  C.save(); C.globalAlpha = dim * 0.86; C.fillStyle = '#000'; C.fillRect(0, 0, W, H); C.restore();
+  var mw = 480, mh = 250, mx = (W - mw)/2, my = (H - mh)/2 - 26;
+  var sc = lerp(0.94, 1, eo(seg(u, 0.15, 0.8)));
+  C.save();
+  C.translate(mx + mw/2, my + mh/2); C.scale(sc, sc); C.translate(-(mx + mw/2), -(my + mh/2));
+  fillRR(mx, my, mw, mh, 16, '#0d141d', 0.99);
+  strokeRR(mx, my, mw, mh, 16, 'rgba(226,86,76,.42)', 1.2, 1);
+  text('永久删除这个会话？', mx + 32, my + 54, 22, '#dbe8f2', 'left', 400, 1);
+  text('磁盘上的日志、投影缓存，还有内存里的会话对象，全部清掉。', mx + 32, my + 100, 13.5, COL.dim, 'left', 400, 1);
+  text('这个操作不能撤销。', mx + 32, my + 132, 13.5, COL.red, 'left', 500, 1);
+  var bw = 118, bh = 38, by = my + mh - 66;
+  var okX = mx + mw - 32 - bw, caX = okX - 12 - bw;
+  fillRR(caX, by, bw, bh, 8, 'rgba(120,150,170,.10)', 1);
+  strokeRR(caX, by, bw, bh, 8, 'rgba(120,150,170,.28)', 1, 1);
+  text('取消', caX + bw/2, by + bh/2, 13.5, '#8ea6b6', 'center', 400, 1);
+  var down = seg(u, 2.5, 2.78);
+  var up = seg(u, 2.9, 3.3);
+  var pressed = down > 0 && up < 1;
+  var glow = 0.55 + 0.45*Math.sin(u*4.2);
+  if (!pressed){
+    C.save(); C.globalAlpha = (0.20 + 0.16*glow) * dim; C.shadowColor = '#e2564c'; C.shadowBlur = 30;
+    rr(okX, by, bw, bh, 8); C.fillStyle = '#b02a22'; C.fill(); C.restore();
+  }
+  fillRR(okX, by, bw, bh, 8, pressed ? '#c8342b' : '#b02a22', 1);
+  text('永久删除', okX + bw/2, by + bh/2, 13.5, '#fff', 'center', 500, 1);
+  C.restore();
+  var p1 = eio(seg(u, 1.4, 2.45));
+  var cxp = lerp(1015, okX + bw/2 - 4, p1);
+  var cyp = lerp(646, by + bh/2 + 2, p1);
+  cursor(cxp, cyp, eo(seg(u, 1.1, 1.6)), pressed);
+  var flash = seg(u, 2.92, 3.9);
+  if (flash > 0 && flash < 1){
+    C.save(); C.globalAlpha = (1 - flash) * 0.30; C.fillStyle = '#e2564c'; C.fillRect(0, 0, W, H); C.restore();
+  }
+  caption('确认框只问一次。答完就走。', eo(seg(u, 3.2, 4.0)));
+}
+/* ============================================================
+   场景 5 · 删除链
+   ============================================================ */
+var STEPS = [
+  ['摘掉内存里的 live 会话', 'sessions.detachEntered(entry)'],
+  ['等 800ms，让写入排空',    'delay(800)'],
+  ['删会话目录 + 投影缓存',   'rmSync(dir)  ·  unlink(cache)'],
+  ['再等 400ms，补删一次',    '缓存会在 disposed 时回写'],
+  ['广播会话已移除',          "ctx.emit('api-session/removed')"]
+];
+
+function scene5(u){
+  var a = eo(seg(u, 0.1, 0.7));
+  text('删除不是一次 unlink。是五步。', W/2, 92, 26, '#cfdde8', 'center', 300, a);
+  var x0 = 214, y0 = 168, stepH = 78;
+  var prog = seg(u, 0.8, 4.6) * STEPS.length;
+  for (var i = 0; i < STEPS.length; i++){
+    var lit = cl(prog - i);
+    var y = y0 + i * stepH;
+    var ia = a * (0.30 + 0.70 * (0.25 + 0.75*lit));
+    if (i < STEPS.length - 1){
+      var la = a * 0.55 * cl(prog - i - 0.5);
+      C.save(); C.globalAlpha = la;
+      C.strokeStyle = 'rgba(127,208,255,.45)'; C.lineWidth = 1.6;
+      C.beginPath(); C.moveTo(x0 + 13, y + 26); C.lineTo(x0 + 13, y + stepH - 14); C.stroke();
+      C.restore();
+    }
+    C.beginPath(); C.arc(x0 + 13, y + 10, 12, 0, 6.2832);
+    C.fillStyle = lit > 0.5 ? 'rgba(127,208,255,.18)' : 'rgba(60,84,99,.16)'; C.fill();
+    C.strokeStyle = lit > 0.5 ? 'rgba(127,208,255,.90)' : 'rgba(70,96,112,.50)';
+    C.lineWidth = 1.4; C.stroke();
+    if (lit > 0.55){
+      C.beginPath();
+      C.moveTo(x0 + 8, y + 10); C.lineTo(x0 + 12, y + 14); C.lineTo(x0 + 19, y + 5);
+      C.strokeStyle = '#7fd0ff'; C.lineWidth = 2; C.stroke();
+    }
+    text(STEPS[i][0], x0 + 38, y + 5, 16, lit > 0.5 ? '#cfdde8' : '#5c7484', 'left', 400, ia);
+    text(STEPS[i][1], x0 + 38, y + 27, 11.5, lit > 0.5 ? '#5f7d90' : '#3d5260', 'left', 400, ia);
+  }
+  var rx = 880, ry = 224, rw = 250;
+  panel(rx - 16, ry - 56, rw + 32, 246, a * 0.92, '左侧栏');
+  var gone = eo(seg(u, 4.7, 5.25));
+  for (var k = 0; k < 3; k++){
+    var yy = ry + k * 52;
+    if (k === 1){
+      var fa2 = 1 - gone;
+      if (fa2 > 0.01){
+        row(rx, yy - gone*26, rw, 44, ROWS[0].n, ROWS[0].m, a * fa2, { hover: true });
+      }
+    } else {
+      var idx = k === 0 ? 1 : 2;
+      row(rx, yy, rw, 44, ROWS[idx].n, ROWS[idx].m, a * 0.85, {});
+    }
+  }
+  if (gone > 0.9){
+    text('那一行已经没了', rx + rw/2, ry + 168, 12.5, COL.green, 'center', 400, a * seg(u, 5.2, 5.7));
+  }
+  caption('顺序不能反。反了，日志会在删完之后重新落盘。', eo(seg(u, 4.6, 5.6)));
+}
+
+/* ============================================================
+   场景 6 · 双形态
+   ============================================================ */
+function scene6(u){
+  var a = eo(seg(u, 0.1, 0.7));
+  text('目录名有两种写法', W/2, 84, 26, '#cfdde8', 'center', 300, a);
+
+  var st = 1 - seg(u, 4.4, 5.1);
+  if (st > 0.01){
+    var a2 = a * st;
+    var bx = 300, by = 126, bw = 680, bh = 104;
+    panel(bx, by, bw, bh, a2, '本机实测：297 个会话目录');
+    var v248 = Math.round(lerp(0, 248, eo(seg(u, 0.5, 1.6))));
+    var v49  = Math.round(lerp(0, 49,  eo(seg(u, 1.0, 2.1))));
+    bigNumber(v248, bx + 180, by + 58, 40, a2, COL.cyan);
+    text('裸 UUID', bx + 180, by + 94, 12, COL.dim, 'center', 400, a2);
+    text('+', bx + 340, by + 58, 24, COL.faint, 'center', 300, a2);
+    bigNumber(v49, bx + 500, by + 58, 40, a2, COL.amber);
+    text('session- 前缀', bx + 500, by + 94, 12, COL.dim, 'center', 400, a2);
+  }
+
+  var bt = seg(u, 3.0, 3.8);
+  if (bt > 0.01){
+    var a3 = a * bt;
+    var cy1 = 272;
+    text('宿主给的 id', 250, cy1, 13, COL.dim, 'left', 400, a3);
+    text('c8f98aba-…-6848480f6718', 372, cy1, 13.5, COL.pale, 'left', 500, a3);
+    text('磁盘目录名', 250, cy1 + 32, 13, COL.dim, 'left', 400, a3);
+    text('session-c8f98aba-…-6848480f6718', 372, cy1 + 32, 13.5, COL.amber, 'left', 500, a3);
+
+    var oa = a3 * (1 - seg(u, 6.6, 7.3));
+    if (oa > 0.01){
+      var oy = cy1 + 84;
+      text('改之前', 250, oy, 12, COL.red, 'left', 500, oa);
+      text('精确匹配 → 找不到 → 只删了缓存 → 照样返回 200', 250, oy + 26, 14, '#a8bccb', 'left', 400, oa);
+      fillRR(250, oy + 42, 116, 22, 4, 'rgba(91,192,140,.20)', oa);
+      text('200 ok', 308, oy + 53, 11, '#8fe0b8', 'center', 500, oa);
+      text('文件还在。嘴上说删干净了。', 384, oy + 53, 12.5, COL.red, 'left', 400, oa);
+    }
+    var na = a3 * seg(u, 6.9, 7.6);
+    if (na > 0.01){
+      var ny = cy1 + 84;
+      text('改之后', 250, ny, 12, COL.green, 'left', 500, na);
+      text('精确匹配 → 未命中就换一种前缀形态再找 → 找到 → 删干净', 250, ny + 26, 14, '#a8bccb', 'left', 400, na);
+      fillRR(250, ny + 42, 168, 22, 4, 'rgba(91,192,140,.20)', na);
+      text('目录 + 缓存 都删掉', 334, ny + 53, 11, '#8fe0b8', 'center', 500, na);
+      text('只剩缓存就报 500 partial，不装成功。', 436, ny + 53, 12.5, COL.cyan, 'left', 400, na);
+    }
+  }
+  caption('同一个会话，两种名字。两种都得认。', eo(seg(u, 6.8, 7.8)));
+}
+
+/* ============================================================
+   场景 7 · 安全
+   ============================================================ */
+function scene7(u){
+  var a = eo(seg(u, 0.1, 0.7));
+  text('它只跟本机说话', W/2, 108, 30, '#cfdde8', 'center', 300, a);
+  var y = 212;
+  var rows = [
+    { from:'来自 127.0.0.1', ok:true,  txt:'放行' },
+    { from:'来自 ::1',       ok:true,  txt:'放行' },
+    { from:'Host 被改成外部域名', ok:false, txt:'403' },
+    { from:'Origin 跨站',    ok:false, txt:'403' }
+  ];
+  for (var i = 0; i < rows.length; i++){
+    var ap = eo(seg(u, 0.5 + i*0.42, 1.0 + i*0.42));
+    var ry = y + i * 64;
+    var bx = 320, bw = 640;
+    fillRR(bx, ry - 24, bw, 50, 9, 'rgba(13,20,29,.92)', a);
+    strokeRR(bx, ry - 24, bw, 50, 9, rows[i].ok ? 'rgba(91,192,140,.26)' : 'rgba(226,86,76,.26)', 1, a);
+    text(rows[i].from, bx + 22, ry + 1, 14, rows[i].ok ? '#b8cfdd' : '#c9a5a1', 'left', 400, a * ap);
+    C.save(); C.globalAlpha = a * ap;
+    C.strokeStyle = rows[i].ok ? 'rgba(91,192,140,.55)' : 'rgba(226,86,76,.55)';
+    C.lineWidth = 1.3;
+    C.beginPath(); C.moveTo(bx + 420, ry + 1); C.lineTo(bx + 486, ry + 1); C.stroke();
+    C.beginPath(); C.moveTo(bx + 480, ry - 4); C.lineTo(bx + 487, ry + 1); C.lineTo(bx + 480, ry + 6); C.stroke();
+    C.restore();
+    fillRR(bx + 508, ry - 14, 96, 30, 6, rows[i].ok ? 'rgba(91,192,140,.16)' : 'rgba(226,86,76,.16)', a * ap);
+    text(rows[i].txt, bx + 556, ry + 1, 13.5, rows[i].ok ? '#7fd3a6' : '#ea7d74', 'center', 500, a * ap);
+  }
+  caption('不回环的一律拒绝。不联网，不调外部接口。', eo(seg(u, 2.8, 3.7)));
+}
+
+/* ============================================================
+   场景 8 · 结尾
+   ============================================================ */
+function scene8(u){
+  var a = eo(seg(u, 0.2, 1.1));
+  whale(W/2, H*0.40, 1.02, 0.55 * a, u + 20);
+  text('dsh-session-menu-delete', W/2, H*0.348, 32, '#d7e9f5', 'center', 300, a);
+  var ua = eo(seg(u, 0.9, 1.7));
+  text('github.com/Dcmwfg/dsh-session-menu-delete', W/2, H*0.432, 17, COL.cyan, 'center', 400, ua);
+  var ia = eo(seg(u, 1.6, 2.4));
+  var lines = [
+    'git clone https://github.com/Dcmwfg/dsh-session-menu-delete.git',
+    '写进 profile 的 dependencies 与 dsh.profile.bundles',
+    'pnpm install，重启 DSH'
+  ];
+  for (var i = 0; i < lines.length; i++){
+    text(lines[i], W/2, H*0.548 + i*27, 12.5,
+         i === 1 ? '#6d8493' : '#8fb4c9', 'center', 400, ia);
+  }
+  text('MIT   ·   0.1.1   ·   删了就没了，这个插件不做回收站', W/2, H*0.745, 12, COL.faint, 'center', 400, eo(seg(u, 2.4, 3.2)));
+}
+
+/* ============================================================
+   音效时间表
+   ============================================================ */
+var CUES = [
+  [0.65,  function(){ sfxDeep(); }],
+  [1.55,  function(){ sfxBubble(); }],
+  [7.10,  function(){ sfxTick(520); }],
+  [7.55,  function(){ sfxTick(470); }],
+  [8.10,  function(){ sfxTick(430); }],
+  [8.52,  function(){ sfxTick(430); }],
+  [8.94,  function(){ sfxTick(400); }],
+  [9.36,  function(){ sfxTick(400); }],
+  [9.78,  function(){ sfxTick(380); }],
+  [10.20, function(){ sfxTick(380); }],
+  [11.50, function(){ sfxThud(); }],
+  [15.90, function(){ sfxClick(); }],
+  [16.05, function(){ sfxOpen(); }],
+  [16.60, function(){ sfxTick(980); }],
+  [19.60, function(){ sfxOpen(); }],
+  [21.95, function(){ sfxClick(); }],
+  [22.45, function(){ sfxThud(); sfxDelete(); }],
+  [26.35, function(){ sfxTick(600); }],
+  [27.11, function(){ sfxTick(640); }],
+  [27.87, function(){ sfxTick(690); }],
+  [28.63, function(){ sfxTick(740); }],
+  [29.39, function(){ sfxTick(800); }],
+  [30.25, function(){ sfxGone(); }],
+  [33.25, function(){ sfxTick(760); }],
+  [33.75, function(){ sfxTick(880); }],
+  [38.85, function(){ sfxClose(); }],
+  [39.30, function(){ sfxOk(); }],
+  [44.00, function(){ sfxTick(700); }],
+  [44.42, function(){ sfxTick(660); }],
+  [44.84, function(){ sfxTick(210); sfxBubble(); }],
+  [45.26, function(){ sfxTick(200); sfxBubble(); }],
+  [51.10, function(){ sfxOk(); }],
+  [55.20, function(){ sfxDeep(); }]
+];
+var cueAt = 0;
+
+/* ============================================================
+   驱动
+   ============================================================ */
+var SCENES = [
+  [S1, scene1], [S2, scene2], [S3, scene3], [S4, scene4],
+  [S5, scene5], [S6, scene6], [S7, scene7], [S8, scene8]
+];
+
+var T = 0, PLAYING = false, LAST = 0, STARTED = false, NOWT = 0;
+var elBar = document.getElementById('bar'), elFill = document.getElementById('fill');
+var elHint = document.getElementById('hint'), elGate = document.getElementById('gate');
+
+function drawFrame(){
+  C.clearRect(0, 0, W, H);
+  drawBg(T);
+  var cur = SCENES[0];
+  for (var i = 0; i < SCENES.length; i++){ if (T >= SCENES[i][0]) cur = SCENES[i]; }
+  var u = T - cur[0];
+  cur[1](u);
+  for (var j = 1; j < SCENES.length; j++){
+    var d = T - SCENES[j][0];
+    if (d >= 0 && d < 0.34){ C.save(); C.globalAlpha = (1 - d/0.34) * 0.55; C.fillStyle = '#000'; C.fillRect(0, 0, W, H); C.restore(); }
+  }
+  var fadeOut = seg(T, TOTAL - 1.2, TOTAL - 0.05);
+  if (fadeOut > 0){ C.save(); C.globalAlpha = fadeOut; C.fillStyle = '#000'; C.fillRect(0, 0, W, H); C.restore(); }
+  if (elFill) elFill.style.width = (cl(T / TOTAL) * 100).toFixed(2) + '%';
+}
+
+function tickAudio(){
+  while (cueAt < CUES.length && CUES[cueAt][0] <= T){
+    try { CUES[cueAt][1](); } catch(e){}
+    cueAt++;
+  }
+}
+
+function loop(now){
+  requestAnimationFrame(loop);
+  var dt = LAST ? Math.min(0.05, (now - LAST) / 1000) : 0;
+  LAST = now;
+  if (!PLAYING) NOWT = NOWT || 0;
+  if (PLAYING){
+    T += dt;
+    if (T >= TOTAL){ T = TOTAL; PLAYING = false; }
+    tickAudio();
+  }
+  drawFrame();
+}
+
+function start(){
+  if (STARTED) return;
+  STARTED = true;
+  audioInit();
+  if (AC && AC.state === 'suspended'){ AC.resume(); }
+  T = 0; cueAt = 0; PLAYING = true;
+  elGate.classList.add('hide');
+  elBar.classList.add('on');
+  elHint.classList.add('on');
+}
+
+function replay(){
+  T = 0; cueAt = 0; PLAYING = true;
+  elBar.classList.add('on'); elHint.classList.add('on');
+  if (AC && AC.state === 'suspended'){ AC.resume(); }
+}
+
+elGate.addEventListener('click', start);
+window.addEventListener('keydown', function(e){
+  if (e.code === 'Space' || e.key === ' '){
+    e.preventDefault();
+    if (!STARTED){ start(); return; }
+    if (T >= TOTAL){ replay(); return; }
+    PLAYING = !PLAYING;
+    if (AC && AC.state === 'suspended' && PLAYING){ AC.resume(); }
+  } else if (e.key === 'r' || e.key === 'R'){
+    if (!STARTED){ start(); return; }
+    if (T >= TOTAL){ replay(); } else { replay(); }
+  } else if (e.key === 'm' || e.key === 'M'){
+    MUTED = !MUTED;
+    if (MASTER){ MASTER.gain.setTargetAtTime(MUTED ? 0 : 0.9, AC.currentTime, 0.05); }
+  } else if (e.key === 'f' || e.key === 'F'){
+    var el = document.documentElement;
+    if (!document.fullscreenElement){ if (el.requestFullscreen) el.requestFullscreen(); }
+    else if (document.exitFullscreen){ document.exitFullscreen(); }
+  }
+});
+
+// 定格模式：?t=12.3 定位到某一秒（做封面/截图用）；?auto=1 直接开播
+var QS = (function(){
+  try { return new URLSearchParams(location.search); } catch(e){ return { get: function(){ return null; }, has: function(){ return false; } }; }
+})();
+var SEEK = QS.get('t');
+if (SEEK !== null && SEEK !== '' && isFinite(parseFloat(SEEK))){
+  T = cl(parseFloat(SEEK));
+  cueAt = 0;
+  STARTED = true;
+  NOWT = T;
+  for (var i = 0; i < CUES.length; i++){ if (CUES[i][0] <= T) cueAt = i + 1; }
+  elGate.classList.add('hide');
+  elBar.classList.add('on');
+  elHint.classList.add('on');
+}
+
+fit();
+drawFrame();
+requestAnimationFrame(loop);
+if (QS.get('auto') === '1'){ start(); }
+</script>
+</body>
+</html>
