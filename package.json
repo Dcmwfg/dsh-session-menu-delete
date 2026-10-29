@@ -16,7 +16,6 @@
   "files": [
     "lib",
     "scripts",
-    "demo",
     "cordis.patch.yml",
     "README.md",
     "LICENSE"
